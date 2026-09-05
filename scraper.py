@@ -2,8 +2,8 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+import cloudscraper
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
 
 URL = "https://partyflock.nl/agenda"
 
@@ -11,59 +11,44 @@ def fetch_partyflock_events():
     today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     events = []
 
-    with sync_playwright() as p:
-        # Start Chromium in headless modus met realistischer browserprofiel
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            viewport={"width": 1280, "height": 800},
-            locale="nl-NL"
-        )
-        page = context.new_page()
+    # Maak een cloudscraper instance aan om Cloudflare Turnstile/403 te omzeilen
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
 
-        print(f"Navigeren naar {URL}...")
-        try:
-            page.goto(URL, wait_until="domcontentloaded", timeout=60000)
-            
-            # Wacht kort tot eventuele Cloudflare-checks voorbij zijn
-            page.wait_for_timeout(5000)
-            
-            # Print de titel van de geladen pagina ter controle
-            print(f"Paginatitel: {page.title()}")
-            
-            html_content = page.content()
-        except Exception as e:
-            print(f"Fout bij laden van pagina: {e}")
-            html_content = ""
-        finally:
-            browser.close()
+    print(f"Ophalen van {URL} via cloudscraper...")
+    try:
+        response = scraper.get(URL, timeout=30)
+        print(f"HTTP Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            print(f"Paginatitel: {soup.title.string if soup.title else 'Geen titel'}")
 
-    if html_content:
-        soup = BeautifulSoup(html_content, "html.parser")
-
-        # Doorzoek alle hyperlinks
-        for a_tag in soup.find_all("a", href=True):
-            href = a_tag["href"]
-            
-            # Partyflock gebruikt links zoals /party/12345:naam of party/12345
-            if re.search(r'/party/|/party\?', href) or "partyflock.nl/party/" in href:
-                title = a_tag.get_text(strip=True)
-                
-                # Filter korte menulinks uit
-                if title and len(title) > 2 and title.lower() not in ["feesten", "party", "meer", "agenda", "overzicht"]:
-                    full_url = href if href.startswith("http") else f"https://partyflock.nl{href}"
+            # Zoek naar alle links die verwijzen naar feesten
+            for a_tag in soup.find_all("a", href=True):
+                href = a_tag["href"]
+                if "/party/" in href or "/party?" in href:
+                    title = a_tag.get_text(strip=True)
                     
-                    # Haal de ouder-rij of div op om de locatie/datum mee te pakken
-                    parent = a_tag.find_parent(["tr", "li", "div", "article", "td"])
-                    info_text = parent.get_text(" | ", strip=True) if parent else title
+                    if title and len(title) > 2 and title.lower() not in ["feesten", "party", "meer", "agenda"]:
+                        full_url = href if href.startswith("http") else f"https://partyflock.nl{href}"
+                        parent = a_tag.find_parent(["tr", "li", "div", "article", "td"])
+                        info_text = parent.get_text(" | ", strip=True) if parent else title
 
-                    events.append({
-                        "title": title,
-                        "url": full_url,
-                        "info": info_text
-                    })
+                        events.append({
+                            "title": title,
+                            "url": full_url,
+                            "info": info_text
+                        })
 
-    # Ontdubbelen
+    except Exception as e:
+        print(f"Fout tijdens het scrapen: {e}")
+
     unique_events = list({ev['url']: ev for ev in events}.values())
     print(f"Totaal aantal unieke feesten gevonden: {len(unique_events)}")
 
