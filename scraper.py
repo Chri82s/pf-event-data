@@ -1,56 +1,54 @@
 import json
 import os
 import re
-import requests
-from bs4 import BeautifulSoup
 from datetime import datetime, timezone
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
-# URL voor de agenda van Partyflock
 URL = "https://partyflock.nl/agenda"
-
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://partyflock.nl/"
-}
 
 def fetch_partyflock_events():
     today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     events = []
 
-    try:
-        session = requests.Session()
-        response = session.get(URL, headers=HEADERS, timeout=15)
-        print(f"HTTP Status: {response.status_code}")
+    with sync_playwright() as p:
+        # Start een echte headles browser om Cloudflare te omzeilen
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            locale="nl-NL"
+        )
+        page = context.new_page()
+
+        print(f"Navigeren naar {URL}...")
+        response = page.goto(URL, wait_until="networkidle", timeout=60000)
         
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            
-            # Zoek alle links die verwijzen naar feesten (/party/ of /party/id:naam)
-            for a_tag in soup.find_all("a", href=True):
-                href = a_tag["href"]
-                if "/party/" in href or "/party?" in href:
-                    title = a_tag.get_text(strip=True)
-                    
-                    # Negeer korte teksten zoals knoppen of paginanummers
-                    if title and len(title) > 2 and title.lower() not in ["feesten", "party", "meer", "next"]:
-                        full_url = f"https://partyflock.nl{href}" if href.startswith('/') else href
-                        
-                        # Haal omliggende tekst op voor locatie/datum informatie
-                        parent = a_tag.find_parent(["td", "tr", "div", "li", "article"])
-                        info_text = parent.get_text(" | ", strip=True) if parent else title
+        status_code = response.status if response else 0
+        print(f"HTTP Status: {status_code}")
 
-                        events.append({
-                            "title": title,
-                            "url": full_url,
-                            "info": info_text
-                        })
+        # Wacht tot de pagina of agenda-elementen zijn geladen
+        page.wait_for_timeout(3000)
+        html_content = page.content()
+        browser.close()
 
-    except Exception as e:
-        print(f"Fout tijdens het scrapen: {e}")
+    soup = BeautifulSoup(html_content, "html.parser")
 
-    # Ontdubbelen op basis van URL
+    # Zoek alle links naar feesten
+    for a_tag in soup.find_all("a", href=True):
+        href = a_tag["href"]
+        if "/party/" in href:
+            title = a_tag.get_text(strip=True)
+            if title and len(title) > 2 and title.lower() not in ["feesten", "party", "meer"]:
+                full_url = f"https://partyflock.nl{href}" if href.startswith('/') else href
+                parent = a_tag.find_parent(["td", "tr", "div", "li", "article"])
+                info_text = parent.get_text(" | ", strip=True) if parent else title
+
+                events.append({
+                    "title": title,
+                    "url": full_url,
+                    "info": info_text
+                })
+
     unique_events = list({ev['url']: ev for ev in events}.values())
     print(f"Totaal aantal unieke feesten gevonden: {len(unique_events)}")
 
