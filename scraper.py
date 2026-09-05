@@ -8,24 +8,33 @@ from datetime import datetime, timezone
 URL = "https://partyflock.nl/agenda"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    "Accept-Language": "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "nl,nl-NL;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache"
 }
 
 def fetch_partyflock_events():
     today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    response = requests.get(URL, headers=HEADERS)
     
-    print(f"HTTP Status: {response.status_code}")
-    if response.status_code != 200:
-        raise Exception(f"Kon Partyflock niet bereiken, statuscode: {response.status_code}")
+    try:
+        response = requests.get(URL, headers=HEADERS, timeout=15)
+        print(f"HTTP Status: {response.status_code}")
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Fout bij ophalen van Partyflock: {e}")
+        # Maak alsnog een leeg bestand aan zodat de GitHub Action niet vastloopt
+        os.makedirs("data", exist_ok=True)
+        with open(f"data/partyflock_events_{today_date}.json", "w", encoding="utf-8") as f:
+            json.dump([], f)
+        return
 
     soup = BeautifulSoup(response.text, "html.parser")
     events = []
 
     for link in soup.find_all("a", href=True):
         href = link['href']
-        if re.search(r'/party/\d+:', href):
+        if "/party/" in href:
             title = link.get_text(strip=True)
             if title and len(title) > 2:
                 parent = link.find_parent(["td", "tr", "div", "li"])
@@ -38,7 +47,6 @@ def fetch_partyflock_events():
                 })
 
     unique_events = list({ev['url']: ev for ev in events}.values())
-
     print(f"Aantal feesten gevonden op Partyflock: {len(unique_events)}")
 
     os.makedirs("data", exist_ok=True)
