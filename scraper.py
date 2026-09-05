@@ -1,62 +1,82 @@
 import json
 import os
-import re
+import requests
 from datetime import datetime, timezone
 from bs4 import BeautifulSoup
-from curl_cffi import requests
 
-# Partyflock agenda URL
-URL = "https://partyflock.nl/agenda"
+# Appic / Partyflock API endpoint voor evenementen in NL
+API_URL = "https://appic.events/api/v2/events?country=NL&limit=100"
+RSS_URL = "https://partyflock.nl/rss/agenda"
 
-def fetch_partyflock_events():
-    today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    events = []
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*"
+}
 
-    print(f"Ophalen van {URL} via curl_cffi Chrome impersonation...")
+def fetch_events_from_api():
+    print("Ophalen via Partyflock Partner API...")
     try:
-        # impersonate="chrome124" zorgt voor de exacte TLS/JA3 fingerprint van Chrome
-        response = requests.get(
-            URL,
-            impersonate="chrome124",
-            headers={
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                "accept-language": "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7",
-                "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "document",
-                "sec-fetch-mode": "navigate",
-                "sec-fetch-site": "none",
-                "sec-fetch-user": "?1",
-                "upgrade-insecure-requests": "1"
-            },
-            timeout=30
-        )
+        response = requests.get(API_URL, headers=HEADERS, timeout=15)
+        print(f"API HTTP Status: {response.status_code}")
         
-        print(f"HTTP Status: {response.status_code}")
-
         if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            print(f"Paginatitel: {soup.title.string if soup.title else 'Geen titel'}")
+            data = response.json()
+            events_data = data.get("data", []) or data.get("events", [])
+            
+            events = []
+            for item in events_data:
+                title = item.get("name") or item.get("title")
+                url = item.get("url") or f"https://partyflock.nl/party/{item.get('id')}"
+                location = item.get("location", {}).get("name", "Nederland") if isinstance(item.get("location"), dict) else "Nederland"
+                date_str = item.get("start_date") or item.get("date", "")
 
-            for a_tag in soup.find_all("a", href=True):
-                href = a_tag["href"]
-                if "/party/" in href or "/party?" in href:
-                    title = a_tag.get_text(strip=True)
-                    if title and len(title) > 2 and title.lower() not in ["feesten", "party", "meer", "agenda"]:
-                        full_url = href if href.startswith("http") else f"https://partyflock.nl{href}"
-                        parent = a_tag.find_parent(["tr", "li", "div", "article", "td"])
-                        info_text = parent.get_text(" | ", strip=True) if parent else title
-
-                        events.append({
-                            "title": title,
-                            "url": full_url,
-                            "info": info_text
-                        })
-
+                if title:
+                    events.append({
+                        "title": title,
+                        "url": url,
+                        "info": f"{date_str} | {location}"
+                    })
+            return events
     except Exception as e:
-        print(f"Fout tijdens het scrapen: {e}")
+        print(f"Fout bij API: {e}")
+    return []
 
+def fetch_events_from_rss():
+    print("Ophalen via RSS Feed Fallback...")
+    try:
+        response = requests.get(RSS_URL, headers=HEADERS, timeout=15)
+        print(f"RSS HTTP Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "xml")
+            events = []
+            for item in soup.find_all("item"):
+                title = item.title.get_text(strip=True) if item.title else ""
+                link = item.link.get_text(strip=True) if item.link else ""
+                desc = item.description.get_text(strip=True) if item.description else ""
+
+                if title:
+                    events.append({
+                        "title": title,
+                        "url": link,
+                        "info": desc
+                    })
+            return events
+    except Exception as e:
+        print(f"Fout bij RSS: {e}")
+    return []
+
+def main():
+    today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    
+    # 1. Probeer API
+    events = fetch_events_from_api()
+
+    # 2. Fallback op RSS als API geen resultaat geeft
+    if not events:
+        events = fetch_events_from_rss()
+
+    # Ontdubbelen op basis van URL
     unique_events = list({ev['url']: ev for ev in events}.values())
     print(f"Totaal aantal unieke feesten gevonden: {len(unique_events)}")
 
@@ -69,4 +89,4 @@ def fetch_partyflock_events():
     print(f"Opgeslagen in {output_file}")
 
 if __name__ == "__main__":
-    fetch_partyflock_events()
+    main()
