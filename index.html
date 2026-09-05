@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Partyflock Agenda NL</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f9; color: #333; }
+        h1 { color: #d32f2f; }
+        .event-card { background: white; padding: 15px; margin-bottom: 10px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .event-title { font-size: 1.2em; font-weight: bold; text-decoration: none; color: #1976d2; }
+        .event-title:hover { text-decoration: underline; }
+        .event-info { font-size: 0.9em; color: #666; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+    <h1>Partyflock Feesten Agenda</h1>
+    <div id="events-container">Laden van evenementen...</div>
+
+    <script>
+        async function loadEvents() {
+            const today = new Date().toISOString().split('T')[0];
+            const container = document.getElementById('events-container');
+
+            try {
+                const response = await fetch(`./data/partyflock_events_${today}.json`);
+                if (!response.ok) throw new Error("Geen data gevonden voor vandaag.");
+
+                const events = await response.json();
+                container.innerHTML = '';
+
+                if (events.length === 0) {
+                    container.innerHTML = '<p>Geen evenementen gevonden voor vandaag.</p>';
+                    return;
+                }
+
+                events.forEach(ev => {
+                    const card = document.createElement('div');
+                    card.className = 'event-card';
+                    card.innerHTML = `
+                        <a class="event-title" href="${ev.url}" target="_blank">${ev.title}</a>
+                        <div class="event-info">${ev.info}</div>
+                    `;
+                    container.appendChild(card);
+                });
+            } catch (err) {
+                container.innerHTML = `<p>${err.message}</p>`;
+            }
+        }
+
+        loadEvents();
+    </script>
+</body>
+</html>
